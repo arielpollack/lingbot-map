@@ -97,7 +97,11 @@ We provide four example scenes in `example/` that you can run out of the box:
 python demo.py --model_path /path/to/lingbot-map-long.pt \
     --image_folder example/church --mask_sky
 ```
-<img width="652" height="200" alt="output_pointcloud_side_by_side" src="https://github.com/user-attachments/assets/c7de79f5-78ee-4c6b-9a9c-64f5279a6e37" />
+
+
+https://github.com/user-attachments/assets/aa10f7ab-8024-43c7-92f8-d56159ec85c8
+
+
 
 
 
@@ -107,7 +111,11 @@ python demo.py --model_path /path/to/lingbot-map-long.pt \
 python demo.py --model_path /path/to/lingbot-map-long.pt \
     --image_folder example/university --mask_sky
 ```
-<img width="544" height="200" alt="output_pointcloud_side_by_side" src="https://github.com/user-attachments/assets/4f2e1dea-11d6-4e1c-a313-f1302dc76256" />
+
+
+https://github.com/user-attachments/assets/212a1744-6ff5-4ccf-9bd4-728608248b57
+
+
 
 
 
@@ -118,7 +126,11 @@ python demo.py --model_path /path/to/lingbot-map-long.pt \
 python demo.py --model_path /path/to/lingbot-map-long.pt \
     --image_folder example/loop
 ```
-<img width="534" height="240" alt="output_pointcloud_side_by_side" src="https://github.com/user-attachments/assets/dd76f859-59cf-4538-a7d1-2f1f6b100ab3" />
+
+
+https://github.com/user-attachments/assets/5ae0a292-b081-40c6-838c-b7c1a0538d75
+
+
 
 
 
@@ -127,7 +139,11 @@ python demo.py --model_path /path/to/lingbot-map-long.pt \
 python demo.py --model_path /path/to/lingbot-map-long.pt \
     --image_folder example/oxford --mask_sky
 ```
-<img width="506" height="200" alt="output_pointcloud_side_by_side" src="https://github.com/user-attachments/assets/73f6262b-4857-429f-add9-abbd6a8a4fe8" />
+
+
+https://github.com/user-attachments/assets/6b8daa95-9ed4-40b2-9902-7435779b886d
+
+
 
 
 
@@ -149,7 +165,11 @@ python demo.py \
     --camera_num_iterations 4 \
     --keyframe_interval 2
 ```
-<img width="490" height="180" alt="output_pointcloud_side_by_side" src="https://github.com/user-attachments/assets/744a3f53-89ad-44a7-9f0c-5dd46ee06b35" />
+
+
+https://github.com/user-attachments/assets/d350b590-d036-4363-af8c-7af3918338ef
+
+
 
 
 
