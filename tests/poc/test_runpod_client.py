@@ -39,8 +39,10 @@ def test_submit_posts_async_run_payload():
     assert method == "POST"
     assert url == "https://api.runpod.ai/v2/ep/run"
     assert headers["authorization"] == "Bearer rp"
+    assert headers["content-type"] == "application/json"
     assert payload["input"] == {"run_id": "abc"}
     assert payload["policy"]["executionTimeout"] == 900000
+    assert payload["policy"]["ttl"] == 7200000
     assert timeout == 30
 
 
