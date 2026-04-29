@@ -44,7 +44,7 @@
 - Create: `poc/app/config.py`
 - Create: `tests/poc/test_config.py`
 
-- [ ] **Step 1: Write the failing config tests**
+- [x] **Step 1: Write the failing config tests**
 
 Create `tests/poc/test_config.py`:
 
@@ -84,13 +84,13 @@ def test_require_env_reports_missing_values(monkeypatch):
     assert "R2_BUCKET" in message
 ```
 
-- [ ] **Step 2: Run the tests and verify they fail**
+- [x] **Step 2: Run the tests and verify they fail**
 
 Run: `python -m pytest tests/poc/test_config.py -q`
 
 Expected: FAIL with `ModuleNotFoundError: No module named 'poc'`.
 
-- [ ] **Step 3: Implement config parsing**
+- [x] **Step 3: Implement config parsing**
 
 Create `poc/__init__.py` as an empty file.
 
@@ -149,13 +149,13 @@ def require_env() -> AppConfig:
     )
 ```
 
-- [ ] **Step 4: Run config tests**
+- [x] **Step 4: Run config tests**
 
 Run: `python -m pytest tests/poc/test_config.py -q`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 Run:
 
@@ -170,7 +170,7 @@ git commit -m "Add POC configuration"
 - Create: `poc/app/runs.py`
 - Create: `tests/poc/test_runs.py`
 
-- [ ] **Step 1: Write failing run store tests**
+- [x] **Step 1: Write failing run store tests**
 
 Create `tests/poc/test_runs.py`:
 
@@ -205,13 +205,13 @@ def test_run_store_persists_between_instances(tmp_path):
     assert second.get_run(run["id"])["filename"] == "clip.mp4"
 ```
 
-- [ ] **Step 2: Run the tests and verify they fail**
+- [x] **Step 2: Run the tests and verify they fail**
 
 Run: `python -m pytest tests/poc/test_runs.py -q`
 
 Expected: FAIL with `ModuleNotFoundError` or `ImportError` for `poc.app.runs`.
 
-- [ ] **Step 3: Implement the run store**
+- [x] **Step 3: Implement the run store**
 
 Create `poc/app/runs.py`:
 
@@ -285,13 +285,13 @@ class RunStore:
         tmp_path.replace(self.path)
 ```
 
-- [ ] **Step 4: Run run store tests**
+- [x] **Step 4: Run run store tests**
 
 Run: `python -m pytest tests/poc/test_runs.py -q`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 Run:
 
@@ -307,7 +307,7 @@ git commit -m "Add POC run store"
 - Create: `poc/app/runpod_client.py`
 - Create: `tests/poc/test_runpod_client.py`
 
-- [ ] **Step 1: Write failing Runpod client tests**
+- [x] **Step 1: Write failing Runpod client tests**
 
 Create `tests/poc/test_runpod_client.py`:
 
@@ -368,13 +368,13 @@ def test_status_gets_job_status():
     assert session.calls[0][1] == "https://api.runpod.ai/v2/ep/status/job-123"
 ```
 
-- [ ] **Step 2: Run tests and verify failure**
+- [x] **Step 2: Run tests and verify failure**
 
 Run: `python -m pytest tests/poc/test_runpod_client.py -q`
 
 Expected: FAIL with `ModuleNotFoundError` or missing `RunpodClient`.
 
-- [ ] **Step 3: Implement Runpod client**
+- [x] **Step 3: Implement Runpod client**
 
 Create `poc/app/runpod_client.py`:
 
@@ -418,7 +418,7 @@ class RunpodClient:
         return response.json()
 ```
 
-- [ ] **Step 4: Implement R2 client wrapper**
+- [x] **Step 4: Implement R2 client wrapper**
 
 Create `poc/app/r2.py`:
 
@@ -473,13 +473,13 @@ class R2Client:
         return f"{self.public_base_url}/{quote(key)}"
 ```
 
-- [ ] **Step 5: Run client tests**
+- [x] **Step 5: Run client tests**
 
 Run: `python -m pytest tests/poc/test_runpod_client.py -q`
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 Run:
 
@@ -496,7 +496,7 @@ git commit -m "Add POC storage and Runpod clients"
 - Create: `poc/app/static/app.js`
 - Create: `poc/app/static/styles.css`
 
-- [ ] **Step 1: Create FastAPI app**
+- [x] **Step 1: Create FastAPI app**
 
 Create `poc/app/main.py`:
 
@@ -627,7 +627,7 @@ def get_artifact(run_id: str, name: str):
     return StreamingResponse(body.iter_chunks(), media_type=media_type)
 ```
 
-- [ ] **Step 2: Create the upload page**
+- [x] **Step 2: Create the upload page**
 
 Create `poc/app/static/index.html`:
 
@@ -670,7 +670,7 @@ Create `poc/app/static/index.html`:
 </html>
 ```
 
-- [ ] **Step 3: Add upload and polling JavaScript**
+- [x] **Step 3: Add upload and polling JavaScript**
 
 Create `poc/app/static/app.js`:
 
@@ -744,7 +744,7 @@ refreshRuns().catch((error) => {
 setInterval(() => refreshRuns().catch(() => {}), 5000);
 ```
 
-- [ ] **Step 4: Add plain styling**
+- [x] **Step 4: Add plain styling**
 
 Create `poc/app/static/styles.css`:
 
@@ -802,19 +802,19 @@ td {
 }
 ```
 
-- [ ] **Step 5: Install local app dependencies if needed**
+- [x] **Step 5: Install local app dependencies if needed**
 
 Run: `python -m pip install fastapi uvicorn python-multipart boto3 requests pytest`
 
 Expected: packages install successfully.
 
-- [ ] **Step 6: Start the local server**
+- [x] **Step 6: Start the local server**
 
 Run: `uvicorn poc.app.main:app --reload --port 7860`
 
 Expected: app starts at `http://127.0.0.1:7860`. If env vars are missing, it exits with the config error from Task 1.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 Run:
 
@@ -828,7 +828,7 @@ git commit -m "Add local POC upload app"
 **Files:**
 - Modify: `lingbot_map/vis/glb_export.py`
 
-- [ ] **Step 1: Add a package-level export helper**
+- [x] **Step 1: Add a package-level export helper**
 
 Append this function to `lingbot_map/vis/glb_export.py`:
 
@@ -902,13 +902,13 @@ def export_predictions_glb_file(
     }
 ```
 
-- [ ] **Step 2: Smoke-check import**
+- [x] **Step 2: Smoke-check import**
 
 Run: `python - <<'PY'\nfrom lingbot_map.vis.glb_export import export_predictions_glb_file\nprint(export_predictions_glb_file.__name__)\nPY`
 
 Expected: prints `export_predictions_glb_file`.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 Run:
 
@@ -922,7 +922,7 @@ git commit -m "Add headless GLB export helper"
 **Files:**
 - Create: `poc/worker/run_reconstruction.py`
 
-- [ ] **Step 1: Create headless reconstruction wrapper**
+- [x] **Step 1: Create headless reconstruction wrapper**
 
 Create `poc/worker/run_reconstruction.py`:
 
@@ -1048,13 +1048,13 @@ def run_reconstruction(video_path: str | Path, output_dir: str | Path, options: 
     return {"scene_path": str(glb_path), "metadata_path": str(metadata_path), "metadata": metadata}
 ```
 
-- [ ] **Step 2: Smoke-check import**
+- [x] **Step 2: Smoke-check import**
 
 Run: `python - <<'PY'\nfrom poc.worker.run_reconstruction import video_metadata, run_reconstruction\nprint(video_metadata.__name__, run_reconstruction.__name__)\nPY`
 
 Expected: imports without starting inference.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 Run:
 
@@ -1069,7 +1069,7 @@ git commit -m "Add headless reconstruction worker wrapper"
 - Create: `poc/worker/handler.py`
 - Create: `tests/poc/test_worker_handler.py`
 
-- [ ] **Step 1: Write handler tests with monkeypatched dependencies**
+- [x] **Step 1: Write handler tests with monkeypatched dependencies**
 
 Create `tests/poc/test_worker_handler.py`:
 
@@ -1127,13 +1127,13 @@ def test_handler_downloads_runs_and_uploads(monkeypatch, tmp_path):
     )
 ```
 
-- [ ] **Step 2: Run test and verify failure**
+- [x] **Step 2: Run test and verify failure**
 
 Run: `python -m pytest tests/poc/test_worker_handler.py -q`
 
 Expected: FAIL with missing `poc.worker.handler`.
 
-- [ ] **Step 3: Implement handler**
+- [x] **Step 3: Implement handler**
 
 Create `poc/worker/handler.py`:
 
@@ -1190,13 +1190,13 @@ if __name__ == "__main__":
     runpod.serverless.start({"handler": handle_job})
 ```
 
-- [ ] **Step 4: Run handler test**
+- [x] **Step 4: Run handler test**
 
 Run: `python -m pytest tests/poc/test_worker_handler.py -q`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 Run:
 
@@ -1213,7 +1213,7 @@ git commit -m "Add Runpod worker handler"
 - Create: `poc/.env.example`
 - Create: `poc/README.md`
 
-- [ ] **Step 1: Create worker requirements**
+- [x] **Step 1: Create worker requirements**
 
 Create `poc/worker/requirements.txt`:
 
@@ -1231,7 +1231,7 @@ viser>=0.2.23
 flashinfer-python
 ```
 
-- [ ] **Step 2: Create Dockerfile**
+- [x] **Step 2: Create Dockerfile**
 
 Create `poc/worker/Dockerfile`:
 
@@ -1257,7 +1257,7 @@ RUN pip install --no-cache-dir -e ".[vis]" \
 CMD ["python", "-u", "poc/worker/handler.py"]
 ```
 
-- [ ] **Step 3: Create environment example**
+- [x] **Step 3: Create environment example**
 
 Create `poc/.env.example`:
 
@@ -1272,7 +1272,7 @@ R2_PUBLIC_BASE_URL=
 POC_DATA_DIR=poc/.data
 ```
 
-- [ ] **Step 4: Create POC README**
+- [x] **Step 4: Create POC README**
 
 Create `poc/README.md`:
 
@@ -1310,7 +1310,7 @@ Create a Runpod Serverless endpoint with that image. Configure the same R2 envir
 4. The local page polls status. When complete, click `view`.
 ```
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 Run:
 
@@ -1325,7 +1325,7 @@ git commit -m "Add Runpod worker packaging docs"
 - Create: `poc/app/static/viewer.html`
 - Create: `poc/app/static/viewer.js`
 
-- [ ] **Step 1: Create viewer HTML**
+- [x] **Step 1: Create viewer HTML**
 
 Create `poc/app/static/viewer.html`:
 
@@ -1351,7 +1351,7 @@ Create `poc/app/static/viewer.html`:
 </html>
 ```
 
-- [ ] **Step 2: Create viewer JavaScript**
+- [x] **Step 2: Create viewer JavaScript**
 
 Create `poc/app/static/viewer.js`:
 
@@ -1477,13 +1477,13 @@ loadScene();
 requestAnimationFrame(animate);
 ```
 
-- [ ] **Step 3: Smoke-check local server serves viewer**
+- [x] **Step 3: Smoke-check local server serves viewer**
 
 Run: `uvicorn poc.app.main:app --port 7860`
 
 Expected: `GET http://127.0.0.1:7860/viewer?run=test` returns the viewer HTML. It may show a GLB load error until a real run exists.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 Run:
 
@@ -1497,13 +1497,13 @@ git commit -m "Add static FPS GLB viewer"
 **Files:**
 - Modify only if verification reveals a bug.
 
-- [ ] **Step 1: Run unit tests**
+- [x] **Step 1: Run unit tests**
 
 Run: `python -m pytest tests/poc -q`
 
 Expected: all POC unit tests pass.
 
-- [ ] **Step 2: Run import checks**
+- [x] **Step 2: Run import checks**
 
 Run:
 
@@ -1520,7 +1520,7 @@ PY
 
 Expected: prints `imports ok`.
 
-- [ ] **Step 3: Run local app with dummy env**
+- [x] **Step 3: Run local app with dummy env**
 
 Run:
 
@@ -1536,13 +1536,13 @@ uvicorn poc.app.main:app --port 7860
 
 Expected: server starts. Uploading will fail against dummy R2, but `/` and `/viewer?run=test` render.
 
-- [ ] **Step 4: Build worker image metadata**
+- [x] **Step 4: Build worker image metadata**
 
 Run: `docker build -f poc/worker/Dockerfile -t lingbot-map-runpod-poc .`
 
 Expected: Docker build completes. If network or Docker daemon is unavailable, record that in the final handoff.
 
-- [ ] **Step 5: Commit verification fixes**
+- [x] **Step 5: Commit verification fixes**
 
 If any fixes were needed:
 
