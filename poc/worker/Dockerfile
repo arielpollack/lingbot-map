@@ -16,4 +16,6 @@ COPY poc ./poc
 RUN pip install --no-cache-dir -e ".[vis]" \
     && pip install --no-cache-dir -r poc/worker/requirements.txt
 
-CMD ["python", "-u", "poc/worker/handler.py"]
+ENV PYTHONPATH=/workspace/lingbot-map
+ENV PYTHONUNBUFFERED=1
+CMD ["python", "-m", "poc.worker.handler"]
