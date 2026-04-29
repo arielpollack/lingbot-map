@@ -32,6 +32,98 @@ except ImportError:
     print("trimesh not found. GLB export will not work.")
 
 
+def export_predictions_glb_file(
+    predictions: dict,
+    output_path: str,
+    conf_threshold: float = 1.5,
+    downsample_factor: int = 10,
+    show_cam: bool = True,
+) -> dict:
+    """Export prepared demo predictions to a GLB file without starting Viser."""
+    if trimesh is None:
+        raise ImportError("trimesh is required for GLB export. Install with: pip install trimesh")
+
+    downsample_factor = int(downsample_factor)
+    if downsample_factor < 1:
+        raise ValueError("downsample_factor must be >= 1")
+
+    world_points = predictions.get("world_points")
+    conf = predictions.get("world_points_conf", predictions.get("depth_conf"))
+    images = predictions["images"]
+    extrinsics = predictions["extrinsic"]
+
+    if world_points is None:
+        from lingbot_map.utils.geometry import unproject_depth_map_to_point_map
+
+        world_points = unproject_depth_map_to_point_map(
+            predictions["depth"],
+            predictions["extrinsic"],
+            predictions["intrinsic"],
+        )
+        conf = predictions.get("depth_conf")
+
+    world_points = np.asarray(world_points)
+    images = np.asarray(images)
+    extrinsics = np.asarray(extrinsics)
+
+    if images.ndim == 4 and images.shape[1] == 3:
+        colors = np.transpose(images, (0, 2, 3, 1))
+    else:
+        colors = images
+
+    points = world_points[:, ::downsample_factor, ::downsample_factor, :].reshape(-1, 3)
+    colors = colors[:, ::downsample_factor, ::downsample_factor, :].reshape(-1, 3)
+
+    if conf is not None:
+        conf = np.asarray(conf)
+        conf_values = conf[:, ::downsample_factor, ::downsample_factor].reshape(-1)
+        mask = conf_values >= conf_threshold
+        points = points[mask]
+        colors = colors[mask]
+
+    colors = np.asarray(colors)
+    if colors.size > 0 and np.issubdtype(colors.dtype, np.floating):
+        color_max = float(np.nanmax(colors))
+        if color_max <= 1.0:
+            colors_u8 = (np.clip(colors, 0.0, 1.0) * 255).astype(np.uint8)
+        else:
+            colors_u8 = np.clip(colors, 0.0, 255.0).astype(np.uint8)
+    else:
+        colors_u8 = np.clip(colors, 0, 255).astype(np.uint8)
+
+    scene = trimesh.Scene()
+    scene.add_geometry(trimesh.PointCloud(vertices=points, colors=colors_u8))
+
+    if show_cam:
+        if extrinsics.shape[-2:] == (4, 4):
+            camera_matrices = extrinsics.copy()
+        else:
+            camera_matrices = np.zeros((len(extrinsics), 4, 4))
+            camera_matrices[:, :3, :4] = extrinsics
+            camera_matrices[:, 3, 3] = 1.0
+
+        if len(points) > 0:
+            lo = np.percentile(points, 5, axis=0)
+            hi = np.percentile(points, 95, axis=0)
+            scene_scale = max(np.linalg.norm(hi - lo), 0.1)
+        else:
+            scene_scale = 1.0
+
+        colormap = matplotlib.colormaps.get_cmap("gist_rainbow")
+        for index, world_to_camera in enumerate(camera_matrices):
+            camera_to_world = np.linalg.inv(world_to_camera)
+            rgba = colormap(index / max(len(camera_matrices) - 1, 1))
+            color = tuple(int(255 * value) for value in rgba[:3])
+            integrate_camera_into_scene(scene, camera_to_world, color, scene_scale)
+
+    scene.export(output_path)
+    return {
+        "output_path": output_path,
+        "point_count": int(len(points)),
+        "camera_count": int(len(extrinsics)),
+    }
+
+
 def predictions_to_glb(
     predictions: dict,
     conf_thres: float = 50.0,
