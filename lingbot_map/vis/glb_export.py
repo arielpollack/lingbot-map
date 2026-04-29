@@ -94,14 +94,14 @@ def export_predictions_glb_file(
     scene = trimesh.Scene()
     scene.add_geometry(trimesh.PointCloud(vertices=points, colors=colors_u8))
 
-    if show_cam:
-        if extrinsics.shape[-2:] == (4, 4):
-            camera_matrices = extrinsics.copy()
-        else:
-            camera_matrices = np.zeros((len(extrinsics), 4, 4))
-            camera_matrices[:, :3, :4] = extrinsics
-            camera_matrices[:, 3, 3] = 1.0
+    if extrinsics.shape[-2:] == (4, 4):
+        camera_matrices = extrinsics.copy()
+    else:
+        camera_matrices = np.zeros((len(extrinsics), 4, 4))
+        camera_matrices[:, :3, :4] = extrinsics
+        camera_matrices[:, 3, 3] = 1.0
 
+    if show_cam:
         if len(points) > 0:
             lo = np.percentile(points, 5, axis=0)
             hi = np.percentile(points, 95, axis=0)
@@ -116,6 +116,7 @@ def export_predictions_glb_file(
             color = tuple(int(255 * value) for value in rgba[:3])
             integrate_camera_into_scene(scene, camera_to_world, color, scene_scale)
 
+    scene = apply_scene_alignment(scene, camera_matrices)
     scene.export(output_path)
     return {
         "output_path": output_path,
