@@ -53,6 +53,12 @@ def create_run(
         raise HTTPException(status_code=400, detail="Upload must include a filename")
     if mode not in {"streaming", "windowed"}:
         raise HTTPException(status_code=400, detail="mode must be streaming or windowed")
+    if fps < 1 or fps > 60:
+        raise HTTPException(status_code=400, detail="fps must be between 1 and 60")
+    if first_k is not None and first_k < 1:
+        raise HTTPException(status_code=400, detail="first_k must be greater than or equal to 1")
+    if stride < 1:
+        raise HTTPException(status_code=400, detail="stride must be greater than or equal to 1")
 
     content_type = video.content_type or mimetypes.guess_type(video.filename)[0] or "application/octet-stream"
     provisional_run = store.create_run(filename=video.filename, input_key="")

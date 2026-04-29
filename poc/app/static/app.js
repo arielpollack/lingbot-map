@@ -14,21 +14,33 @@ async function apiJson(url, options = {}) {
 
 function actionCell(run) {
   if (run.status === "completed") {
-    return `<a href="/viewer?run=${encodeURIComponent(run.id)}" target="_blank">view</a>`;
+    const link = document.createElement("a");
+    link.href = `/viewer?run=${encodeURIComponent(run.id)}`;
+    link.target = "_blank";
+    link.textContent = "view";
+    return link;
   }
-  return "";
+  return null;
 }
 
 function renderRuns(runs) {
-  runsNode.innerHTML = runs.map((run) => `
-    <tr>
-      <td>${run.created_at || ""}</td>
-      <td>${run.filename || ""}</td>
-      <td>${run.status || ""}</td>
-      <td>${run.job_id || ""}</td>
-      <td>${actionCell(run)}</td>
-    </tr>
-  `).join("");
+  runsNode.replaceChildren();
+  for (const run of runs) {
+    const row = document.createElement("tr");
+    for (const value of [run.created_at, run.filename, run.status, run.job_id]) {
+      const cell = document.createElement("td");
+      cell.textContent = value || "";
+      row.appendChild(cell);
+    }
+
+    const action = document.createElement("td");
+    const link = actionCell(run);
+    if (link) {
+      action.appendChild(link);
+    }
+    row.appendChild(action);
+    runsNode.appendChild(row);
+  }
 }
 
 async function refreshRuns() {
