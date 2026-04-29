@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>LingBot-Map POC</title>
+    <link rel="stylesheet" href="/static/styles.css">
+  </head>
+  <body>
+    <main>
+      <h1>LingBot-Map POC</h1>
+      <form id="upload-form">
+        <label>Video <input id="video" name="video" type="file" accept="video/*" required></label>
+        <label>FPS <input id="fps" name="fps" type="number" value="10" min="1" max="60"></label>
+        <label>First K <input id="first_k" name="first_k" type="number" min="1"></label>
+        <label>Stride <input id="stride" name="stride" type="number" value="1" min="1"></label>
+        <label>Mode
+          <select id="mode" name="mode">
+            <option value="streaming">streaming</option>
+            <option value="windowed">windowed</option>
+          </select>
+        </label>
+        <label><input id="mask_sky" name="mask_sky" type="checkbox"> mask sky</label>
+        <button type="submit">Upload and run</button>
+      </form>
+      <p id="status"></p>
+      <table>
+        <thead>
+          <tr><th>Created</th><th>File</th><th>Status</th><th>Job</th><th>Action</th></tr>
+        </thead>
+        <tbody id="runs"></tbody>
+      </table>
+    </main>
+    <script src="/static/app.js"></script>
+  </body>
+</html>
