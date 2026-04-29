@@ -3,7 +3,10 @@ from __future__ import annotations
 from argparse import Namespace
 from pathlib import Path
 import json
+import os
 import time
+
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
 import cv2
 from huggingface_hub import hf_hub_download
@@ -82,6 +85,10 @@ def run_reconstruction(
     )
     if not torch.cuda.is_available():
         dtype = torch.float32
+
+    if dtype != torch.float32 and getattr(model, "aggregator", None) is not None:
+        print(f"Casting aggregator to {dtype} (heads kept in fp32)")
+        model.aggregator = model.aggregator.to(dtype=dtype)
 
     images = images.to(device)
     if args.keyframe_interval is None:
