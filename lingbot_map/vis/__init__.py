@@ -28,16 +28,7 @@ Usage:
     scene.export("output.glb")
 """
 
-from lingbot_map.vis.point_cloud_viewer import PointCloudViewer
-from lingbot_map.vis.viser_wrapper import viser_wrapper
-from lingbot_map.vis.utils import CameraState, colorize, colorize_np, get_vertical_colorbar
-from lingbot_map.vis.sky_segmentation import (
-    apply_sky_segmentation,
-    download_skyseg_model,
-    load_or_create_sky_masks,
-    segment_sky,
-)
-from lingbot_map.vis.glb_export import predictions_to_glb
+import importlib
 
 __all__ = [
     # Main viewer
@@ -57,3 +48,31 @@ __all__ = [
     "download_skyseg_model",
     "load_or_create_sky_masks",
 ]
+
+_ATTR_TO_MODULE = {
+    "PointCloudViewer": "lingbot_map.vis.point_cloud_viewer",
+    "viser_wrapper": "lingbot_map.vis.viser_wrapper",
+    "CameraState": "lingbot_map.vis.utils",
+    "colorize": "lingbot_map.vis.utils",
+    "colorize_np": "lingbot_map.vis.utils",
+    "get_vertical_colorbar": "lingbot_map.vis.utils",
+    "apply_sky_segmentation": "lingbot_map.vis.sky_segmentation",
+    "segment_sky": "lingbot_map.vis.sky_segmentation",
+    "download_skyseg_model": "lingbot_map.vis.sky_segmentation",
+    "load_or_create_sky_masks": "lingbot_map.vis.sky_segmentation",
+    "predictions_to_glb": "lingbot_map.vis.glb_export",
+}
+
+
+def __getattr__(name: str):
+    module_name = _ATTR_TO_MODULE.get(name)
+    if module_name is None:
+        raise AttributeError(f"module 'lingbot_map.vis' has no attribute {name!r}")
+    module = importlib.import_module(module_name)
+    value = getattr(module, name)
+    globals()[name] = value
+    return value
+
+
+def __dir__():
+    return sorted(set(globals()) | set(__all__))
