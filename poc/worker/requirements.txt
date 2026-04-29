@@ -1,0 +1,11 @@
+runpod~=1.7.6
+boto3
+requests
+huggingface_hub
+fastapi
+python-multipart
+trimesh
+matplotlib
+onnxruntime
+viser>=0.2.23
+flashinfer-python
