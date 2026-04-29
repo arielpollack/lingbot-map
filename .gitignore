@@ -12,3 +12,6 @@ CLAUDE.md
 .agents/
 skyseg.onnx
 .venv/
+.env
+poc/.env
+poc/.data/
