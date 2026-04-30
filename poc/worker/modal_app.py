@@ -30,7 +30,7 @@ FUNCTION_NAME = "process_video"
 # every running invocation of the deployed app uses that pinned image.
 WORKER_IMAGE = os.getenv(
     "LINGBOT_WORKER_IMAGE",
-    "arielpollack/lingbot-map-runpod-poc:gsplat-app-20260430-2240",
+    "arielpollack/lingbot-map-runpod-poc:gsplat-app-gsplat-20260430-2107",
 )
 
 # Pre-existing Modal secret in this workspace. Holds CLOUDFLARE_ACCOUNT_ID,
