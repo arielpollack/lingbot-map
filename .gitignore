@@ -15,3 +15,16 @@ skyseg.onnx
 .env
 poc/.env
 poc/.data/
+
+# macOS
+.DS_Store
+
+# iOS / Xcode user-specific state
+**/xcuserdata/
+**/*.xcuserstate
+ios_app/.swiftpm/
+
+# Flutter scratch (the parked Tier 3 app under attic/)
+**/.dart_tool/
+**/.flutter-plugins
+**/.flutter-plugins-dependencies

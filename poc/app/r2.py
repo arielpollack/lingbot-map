@@ -21,19 +21,34 @@ class R2Client:
             region_name="auto",
         )
 
-    def upload_fileobj(self, fileobj: BinaryIO, key: str, content_type: str | None = None) -> None:
-        extra_args = {"ContentType": content_type} if content_type else None
+    def upload_fileobj(
+        self,
+        fileobj: BinaryIO,
+        key: str,
+        content_type: str | None = None,
+        content_encoding: str | None = None,
+    ) -> None:
+        extra_args = _extra_args(content_type, content_encoding)
         if extra_args:
             self.client.upload_fileobj(fileobj, self.bucket, key, ExtraArgs=extra_args)
         else:
             self.client.upload_fileobj(fileobj, self.bucket, key)
 
-    def upload_file(self, path: str | Path, key: str, content_type: str | None = None) -> None:
-        extra_args = {"ContentType": content_type} if content_type else None
+    def upload_file(
+        self,
+        path: str | Path,
+        key: str,
+        content_type: str | None = None,
+        content_encoding: str | None = None,
+    ) -> None:
+        extra_args = _extra_args(content_type, content_encoding)
         if extra_args:
             self.client.upload_file(str(path), self.bucket, key, ExtraArgs=extra_args)
         else:
             self.client.upload_file(str(path), self.bucket, key)
+
+    def head_object(self, key: str) -> dict:
+        return self.client.head_object(Bucket=self.bucket, Key=key)
 
     def download_file(self, key: str, path: str | Path) -> None:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
@@ -46,3 +61,12 @@ class R2Client:
         if not self.public_base_url:
             return None
         return f"{self.public_base_url}/{quote(key)}"
+
+
+def _extra_args(content_type: str | None, content_encoding: str | None) -> dict | None:
+    extra: dict = {}
+    if content_type:
+        extra["ContentType"] = content_type
+    if content_encoding:
+        extra["ContentEncoding"] = content_encoding
+    return extra or None

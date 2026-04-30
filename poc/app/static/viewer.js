@@ -1,5 +1,5 @@
-import * as THREE from "https://unpkg.com/three@0.164.1/build/three.module.js";
-import { GLTFLoader } from "https://unpkg.com/three@0.164.1/examples/jsm/loaders/GLTFLoader.js";
+import * as THREE from "three";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 
 const params = new URLSearchParams(location.search);
 const runId = params.get("run");
@@ -7,7 +7,7 @@ const root = document.querySelector("#viewer");
 const hud = document.querySelector("#hud");
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0xf0f0f0);
+scene.background = new THREE.Color(0x111418);
 
 const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.01, 10000);
 camera.position.set(0, 0, 2);
@@ -60,15 +60,47 @@ function setCameraFromObject(object) {
   camera.lookAt(center);
 }
 
+const cameraMeshes = [];
+let camerasVisible = false;
+
+function tunePointMaterials(root) {
+  let pointCount = 0;
+  cameraMeshes.length = 0;
+  root.traverse((obj) => {
+    if (obj.isPoints) {
+      pointCount += obj.geometry?.attributes?.position?.count ?? 0;
+      const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+      for (const m of mats) {
+        if (!m) continue;
+        m.size = 3;
+        m.sizeAttenuation = false;
+        m.vertexColors = true;
+        m.needsUpdate = true;
+      }
+    } else if (obj.isMesh || obj.isLineSegments || obj.isLine) {
+      // Camera frustum/cone/line markers exported by trimesh.
+      cameraMeshes.push(obj);
+      obj.visible = camerasVisible;
+    }
+  });
+  return pointCount;
+}
+
+function setCamerasVisible(visible) {
+  camerasVisible = visible;
+  for (const obj of cameraMeshes) obj.visible = visible;
+}
+
 async function loadScene() {
   hud.textContent = "Loading scene...";
   const loader = new GLTFLoader();
   loader.load(
     artifactUrl("scene.glb"),
     (gltf) => {
+      const pointCount = tunePointMaterials(gltf.scene);
       scene.add(gltf.scene);
       setCameraFromObject(gltf.scene);
-      hud.textContent = "Click to lock pointer. WASD move, mouse look, Space up, Shift down.";
+      hud.textContent = `${pointCount.toLocaleString()} points. C: toggle cameras. Click to lock pointer. WASD move, mouse look, Space up, Shift down.`;
     },
     undefined,
     (error) => {
@@ -76,6 +108,10 @@ async function loadScene() {
     }
   );
 }
+
+document.addEventListener("keydown", (event) => {
+  if (event.code === "KeyC") setCamerasVisible(!camerasVisible);
+});
 
 function updateCamera(delta) {
   camera.rotation.order = "YXZ";

@@ -12,15 +12,33 @@ async function apiJson(url, options = {}) {
   return data;
 }
 
-function actionCell(run) {
-  if (run.status === "completed") {
-    const link = document.createElement("a");
-    link.href = `/viewer?run=${encodeURIComponent(run.id)}`;
-    link.target = "_blank";
-    link.textContent = "view";
-    return link;
+function actionLinks(run) {
+  if (run.status !== "completed") return [];
+  const links = [];
+
+  const points = document.createElement("a");
+  points.href = `/viewer?run=${encodeURIComponent(run.id)}`;
+  points.textContent = "view points";
+  links.push(points);
+
+  const meshKey = run?.output?.mesh_key;
+  if (meshKey) {
+    const mesh = document.createElement("a");
+    mesh.href = `/mesh?run=${encodeURIComponent(run.id)}`;
+    mesh.textContent = "view mesh";
+    mesh.style.marginLeft = "8px";
+    links.push(mesh);
   }
-  return null;
+
+  const splatKey = run?.output?.splat_key;
+  if (splatKey) {
+    const splat = document.createElement("a");
+    splat.href = `/splat?run=${encodeURIComponent(run.id)}`;
+    splat.textContent = "view splat";
+    splat.style.marginLeft = "8px";
+    links.push(splat);
+  }
+  return links;
 }
 
 function renderRuns(runs) {
@@ -34,8 +52,7 @@ function renderRuns(runs) {
     }
 
     const action = document.createElement("td");
-    const link = actionCell(run);
-    if (link) {
+    for (const link of actionLinks(run)) {
       action.appendChild(link);
     }
     row.appendChild(action);

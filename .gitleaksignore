@@ -1,0 +1,3 @@
+# False positive in vendored Three.js library — high-entropy string in
+# GLTFLoader.js that gitleaks's generic-api-key rule matches.
+poc/app/static/vendor/three/examples/jsm/loaders/GLTFLoader.js:generic-api-key:2474

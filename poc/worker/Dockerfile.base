@@ -1,0 +1,78 @@
+# Base image for the lingbot-map serverless worker.
+# Heavy build: lingbot-map deps + 3D Gaussian Splatting CUDA wheels.
+# Two stages so the runtime image doesn't carry build artifacts.
+#
+# Tag pattern: arielpollack/lingbot-map-runpod-poc-base:3dgs-YYYYMMDD-HHMM
+# The thin app image (Dockerfile) FROMs this and just COPYs worker code.
+
+# ─── Stage 1: build CUDA wheels ─────────────────────────────────────────────
+FROM pytorch/pytorch:2.6.0-cuda12.4-cudnn9-devel AS builder
+
+WORKDIR /build
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends git ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+
+# Clone graphdeco-inria/gaussian-splatting + the three submodules whose
+# CUDA kernels we need to compile. simple-knn lives on gitlab.inria.fr — its
+# cert chain fails through some corporate TLS proxies, so we relax verify for
+# the submodule pull only.
+RUN git clone --depth 1 https://github.com/graphdeco-inria/gaussian-splatting.git /opt/gaussian-splatting && \
+    cd /opt/gaussian-splatting && \
+    git config --global http.sslVerify false && \
+    git submodule update --init --recursive --depth 1 \
+        submodules/diff-gaussian-rasterization \
+        submodules/simple-knn \
+        submodules/fused-ssim && \
+    git config --global http.sslVerify true
+
+# Endpoint zs2z4gps6jqgn6 GPU pool is 4090 / A5000 / L4 / 3090 / A40 / A6000.
+#  - 8.6 covers 3090, A5000, A6000, A40
+#  - 8.9 covers 4090, L4
+# (Skip 8.0 — A100 not in our pool — to halve wheel build time.)
+ENV TORCH_CUDA_ARCH_LIST="8.6;8.9"
+
+RUN pip wheel --no-deps --wheel-dir /build/wheels /opt/gaussian-splatting/submodules/diff-gaussian-rasterization \
+    && pip wheel --no-deps --wheel-dir /build/wheels /opt/gaussian-splatting/submodules/simple-knn \
+    && pip wheel --no-deps --wheel-dir /build/wheels /opt/gaussian-splatting/submodules/fused-ssim
+
+
+# ─── Stage 2: runtime ───────────────────────────────────────────────────────
+# Slim runtime base. We default `use_sdpa=True` for lingbot-map inference, so
+# the flashinfer-python JIT path (which would need nvcc at runtime) is never
+# exercised. Saves ~7 GB vs the devel variant.
+FROM pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime
+
+WORKDIR /workspace/lingbot-map
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ffmpeg \
+        git \
+        libgl1 \
+        libglib2.0-0 \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install lingbot-map (and its transitive deps: flashinfer, torch addons, etc).
+COPY pyproject.toml README.md LICENSE.txt demo.py ./
+COPY lingbot_map ./lingbot_map
+RUN pip install --no-cache-dir -e ".[vis]"
+
+# Worker-side python deps (runpod, boto3, huggingface_hub, etc).
+COPY poc/worker/requirements.txt /tmp/worker-requirements.txt
+RUN pip install --no-cache-dir -r /tmp/worker-requirements.txt && rm /tmp/worker-requirements.txt
+
+# Install the precompiled 3DGS CUDA wheels and pull in graphdeco's train.py.
+COPY --from=builder /build/wheels /tmp/wheels
+RUN pip install --no-cache-dir /tmp/wheels/*.whl && rm -rf /tmp/wheels
+COPY --from=builder /opt/gaussian-splatting /opt/gaussian-splatting
+
+# plyfile is a hard runtime dep of graphdeco's train.py.
+RUN pip install --no-cache-dir plyfile
+
+# Sanity-check the build at image-build time so failures show up early.
+RUN python -c "import diff_gaussian_rasterization, simple_knn, fused_ssim; print('3DGS wheels OK')"
+
+ENV PYTHONPATH=/workspace/lingbot-map
+ENV PYTHONUNBUFFERED=1

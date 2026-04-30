@@ -14,6 +14,14 @@
   <body>
     <div id="hud">Click to lock pointer. WASD move, mouse look, Space up, Shift down.</div>
     <div id="viewer"></div>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.164.1/build/three.module.js",
+          "three/addons/": "https://unpkg.com/three@0.164.1/examples/jsm/"
+        }
+      }
+    </script>
     <script type="module" src="/static/viewer.js"></script>
   </body>
 </html>

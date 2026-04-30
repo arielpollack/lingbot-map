@@ -1,21 +1,13 @@
-FROM pytorch/pytorch:2.6.0-cuda12.4-cudnn9-devel
+# Thin app image. The base carries lingbot-map + 3DGS CUDA wheels + train.py;
+# we only layer in the worker code so iteration on handler.py is seconds, not
+# 15 minutes.
+#
+# Update the base tag below whenever you rebuild Dockerfile.base.
+ARG BASE_TAG=3dgs-latest
+FROM arielpollack/lingbot-map-runpod-poc-base:${BASE_TAG}
 
 WORKDIR /workspace/lingbot-map
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg \
-    git \
-    libgl1 \
-    libglib2.0-0 \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY pyproject.toml README.md LICENSE.txt demo.py ./
-COPY lingbot_map ./lingbot_map
 COPY poc ./poc
 
-RUN pip install --no-cache-dir -e ".[vis]" \
-    && pip install --no-cache-dir -r poc/worker/requirements.txt
-
-ENV PYTHONPATH=/workspace/lingbot-map
-ENV PYTHONUNBUFFERED=1
 CMD ["python", "-m", "poc.worker.handler"]

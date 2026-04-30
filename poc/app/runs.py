@@ -69,3 +69,53 @@ class RunStore:
         with tmp_path.open("w", encoding="utf-8") as file:
             json.dump(data, file, indent=2, sort_keys=True)
         tmp_path.replace(self.path)
+
+
+class RunStoreDict:
+    """Same surface as RunStore but backed by a `modal.Dict` so the FastAPI
+    asgi_app can persist run records across containers without a Volume.
+
+    Each run is stored under its run_id as a single dict value. Iteration
+    happens via `keys()` / `values()`. Modal Dict ops are network round-trips,
+    so we cache the value on read inside a single request — but that's the
+    caller's responsibility; for the simple POC handler each request just
+    reads/writes the records it touches.
+    """
+
+    def __init__(self, modal_dict):
+        self._d = modal_dict
+
+    def list_runs(self) -> list[dict[str, Any]]:
+        runs = list(self._d.values())
+        return sorted(runs, key=lambda r: r.get("created_at", ""), reverse=True)
+
+    def get_run(self, run_id: str) -> dict[str, Any]:
+        if run_id not in self._d:
+            raise KeyError(run_id)
+        return self._d[run_id]
+
+    def create_run(self, filename: str, input_key: str) -> dict[str, Any]:
+        run_id = uuid4().hex
+        run = {
+            "id": run_id,
+            "filename": filename,
+            "input_key": input_key,
+            "output_prefix": f"runs/{run_id}/",
+            "status": "uploaded",
+            "job_id": None,
+            "result": None,
+            "error": None,
+            "created_at": _now_iso(),
+            "updated_at": _now_iso(),
+        }
+        self._d[run_id] = run
+        return run
+
+    def update_run(self, run_id: str, **updates: Any) -> dict[str, Any]:
+        if run_id not in self._d:
+            raise KeyError(run_id)
+        run = dict(self._d[run_id])  # copy to mutate then write back
+        run.update(updates)
+        run["updated_at"] = _now_iso()
+        self._d[run_id] = run
+        return run

@@ -8,4 +8,7 @@ trimesh
 matplotlib
 onnxruntime
 viser>=0.2.23
-flashinfer-python
+# flashinfer-python intentionally NOT installed: lingbot-map's attention.py
+# wraps `import flashinfer` in try/ImportError, and we run with use_sdpa=True.
+# Pulling it in would trigger triton's C-compiler-needing JIT at import time
+# and force the worker onto the much larger CUDA devel base just for nvcc/gcc.
