@@ -1,8 +1,10 @@
 # Base image for the lingbot-map serverless worker.
-# Heavy build: lingbot-map deps + 3D Gaussian Splatting CUDA wheels.
+# Heavy build: lingbot-map deps + 3D Gaussian Splatting CUDA wheels +
+# nerfstudio-project/gsplat (the in-process trainer the lidar_mesh tier
+# uses for depth-supervised splat training).
 # Two stages so the runtime image doesn't carry build artifacts.
 #
-# Tag pattern: arielpollack/lingbot-map-runpod-poc-base:3dgs-YYYYMMDD-HHMM
+# Tag pattern: arielpollack/lingbot-map-runpod-poc-base:gsplat-YYYYMMDD-HHMM
 # The thin app image (Dockerfile) FROMs this and just COPYs worker code.
 
 # ─── Stage 1: build CUDA wheels ─────────────────────────────────────────────
@@ -27,21 +29,60 @@ RUN git clone --depth 1 https://github.com/graphdeco-inria/gaussian-splatting.gi
         submodules/fused-ssim && \
     git config --global http.sslVerify true
 
-# Endpoint zs2z4gps6jqgn6 GPU pool is 4090 / A5000 / L4 / 3090 / A40 / A6000.
-#  - 8.6 covers 3090, A5000, A6000, A40
-#  - 8.9 covers 4090, L4
-# (Skip 8.0 — A100 not in our pool — to halve wheel build time.)
-ENV TORCH_CUDA_ARCH_LIST="8.6;8.9"
+# Modal deploys this image on A10G (sm_86) — see modal_app.py
+# `gpu="A10G"`. We only need that one arch. Compiling for additional archs
+# (e.g. sm_89 for 4090, sm_80 for A100) adds another ~15 min to the gsplat
+# wheel build with no payoff for our target.
+#
+# Old comment for the Runpod-era pool (4090/A5000/L4/3090/A40/A6000) is
+# obsolete — we left Runpod in the Modal migration.
+ENV TORCH_CUDA_ARCH_LIST="8.6"
 
 RUN pip wheel --no-deps --wheel-dir /build/wheels /opt/gaussian-splatting/submodules/diff-gaussian-rasterization \
     && pip wheel --no-deps --wheel-dir /build/wheels /opt/gaussian-splatting/submodules/simple-knn \
     && pip wheel --no-deps --wheel-dir /build/wheels /opt/gaussian-splatting/submodules/fused-ssim
+
+# gsplat: compile its `csrc` CUDA extension into a wheel here (we have nvcc
+# in this stage). The runtime stage will install this wheel; gsplat's
+# import-time guard then resolves `from gsplat import csrc as _C` directly,
+# without touching its JIT fallback (which would need nvcc at runtime).
+#
+# Two non-obvious things this build needs that you DON'T get from a plain
+# `pip install gsplat` or even `pip wheel --no-binary gsplat`:
+#
+#   1. The PyPI sdist for gsplat is missing the bundled `glm` headers
+#      (vendored as a git submodule under `gsplat/cuda/csrc/third_party/glm`).
+#      `setup.py` adds that path to include_dirs unconditionally, so the
+#      first .cu file fails with `glm/glm.hpp: No such file or directory`.
+#      Cloning recursively from GitHub pulls glm in.
+#   2. PyPI also ships a pure-Python `py3-none-any.whl` that has the
+#      Python wrapper but no compiled extension — pip prefers it over
+#      sdist, leaving `_C = None` at runtime (which crashes downstream
+#      with `'NoneType' object has no attribute 'CameraModelType'` the
+#      first time `rasterization()` is called). Building from the git
+#      checkout sidesteps that completely.
+# MAX_JOBS=4 caps the parallel nvcc invocations. Each CUDA TU compile
+# peaks at ~1 GB RAM (single-arch sm_86); 4 in parallel keeps total
+# memory comfortably under GitHub Actions' 16 GB ubuntu-latest runner.
+# gsplat's setup.py defaults to 10 which has been observed to OOM the
+# Docker daemon on memory-constrained hosts.
+ENV MAX_JOBS=4
+RUN git clone --depth 1 --branch v1.4.0 --recursive \
+        https://github.com/nerfstudio-project/gsplat.git /opt/gsplat-src && \
+    pip wheel --no-deps --wheel-dir /build/wheels /opt/gsplat-src
 
 
 # ─── Stage 2: runtime ───────────────────────────────────────────────────────
 # Slim runtime base. We default `use_sdpa=True` for lingbot-map inference, so
 # the flashinfer-python JIT path (which would need nvcc at runtime) is never
 # exercised. Saves ~7 GB vs the devel variant.
+#
+# gsplat is handled the same way as the 3DGS submodules: compiled into a
+# wheel in the builder stage above (where nvcc lives), then copied across
+# and installed here. gsplat's import-time guard checks for a precompiled
+# `gsplat.csrc` first and only falls back to JIT (needing nvcc) if that
+# import fails — so installing the precompiled wheel here keeps gsplat
+# happy without dragging the toolkit into the runtime image.
 FROM pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime
 
 WORKDIR /workspace/lingbot-map
@@ -69,10 +110,17 @@ RUN pip install --no-cache-dir /tmp/wheels/*.whl && rm -rf /tmp/wheels
 COPY --from=builder /opt/gaussian-splatting /opt/gaussian-splatting
 
 # plyfile is a hard runtime dep of graphdeco's train.py.
-RUN pip install --no-cache-dir plyfile
+# rich is a runtime dep of gsplat (its console output during init).
+RUN pip install --no-cache-dir plyfile rich
 
 # Sanity-check the build at image-build time so failures show up early.
-RUN python -c "import diff_gaussian_rasterization, simple_knn, fused_ssim; print('3DGS wheels OK')"
+# The gsplat check verifies the `_C` CUDA extension actually loaded —
+# gsplat keeps `_C = None` when its toolkit guard trips, then crashes
+# downstream with `'NoneType' object has no attribute 'CameraModelType'`
+# the first time `rasterization()` is called. This was the failure mode
+# when gsplat was pip-installed in the slim runtime stage (no nvcc).
+RUN python -c "import diff_gaussian_rasterization, simple_knn, fused_ssim; print('3DGS wheels OK')" && \
+    python -c "import gsplat; from gsplat.rendering import rasterization; from gsplat.strategy import DefaultStrategy; from gsplat.cuda._backend import _C; assert _C is not None, 'gsplat _C extension is None — wheel mismatch or CUDA build failed in builder stage'; print('gsplat', gsplat.__version__, '_C OK')"
 
 ENV PYTHONPATH=/workspace/lingbot-map
 ENV PYTHONUNBUFFERED=1

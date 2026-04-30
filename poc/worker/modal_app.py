@@ -30,7 +30,7 @@ FUNCTION_NAME = "process_video"
 # every running invocation of the deployed app uses that pinned image.
 WORKER_IMAGE = os.getenv(
     "LINGBOT_WORKER_IMAGE",
-    "arielpollack/lingbot-map-runpod-poc:3dgs-app2-20260429-1601",
+    "arielpollack/lingbot-map-runpod-poc:gsplat-app-20260430-2240",
 )
 
 # Pre-existing Modal secret in this workspace. Holds CLOUDFLARE_ACCOUNT_ID,
@@ -115,6 +115,17 @@ def probe_worker() -> dict:
         checks["open3d"] = o3d.__version__
     except Exception as exc:
         checks["open3d"] = f"FAIL: {type(exc).__name__}: {exc}"
+
+    try:
+        # Verify the gsplat-library trainer (new for the lidar_mesh tier)
+        # can resolve its CUDA kernels at import time. The runtime call
+        # path needs `rasterization` + `DefaultStrategy`.
+        import gsplat as _gsplat_lib
+        from gsplat.rendering import rasterization  # noqa
+        from gsplat.strategy import DefaultStrategy  # noqa
+        checks["gsplat_lib"] = _gsplat_lib.__version__
+    except Exception as exc:
+        checks["gsplat_lib"] = f"FAIL: {type(exc).__name__}: {exc}"
 
     try:
         from poc.app.config import require_env

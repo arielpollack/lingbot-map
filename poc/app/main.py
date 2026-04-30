@@ -180,7 +180,11 @@ def get_artifact(run_id: str, name: str):
     head = r2.head_object(key)
     if name.endswith(".glb"):
         media_type = "model/gltf-binary"
-    elif name.endswith(".ply"):
+    elif name.endswith(".ply") or name.endswith(".splat"):
+        # `.splat` is the antimatter15 binary format (no gzip — content is
+        # already a packed binary float/int payload). PLY may carry
+        # Content-Encoding: gzip from older runs; the head_object lookup
+        # below picks that up.
         media_type = "application/octet-stream"
     else:
         media_type = "application/json"

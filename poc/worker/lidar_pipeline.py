@@ -283,11 +283,23 @@ def _process_lidar_mesh(
         flush=True,
     )
 
-    # ── Load keyframes + poses. ──
+    # ── Load keyframes + poses + depth (if any). ──
     t0 = time.time()
     pose_files = sorted((bundle_dir / "poses").glob("*.json"))
     if not pose_files:
         raise ValueError("Bundle has no pose files for texture baking")
+
+    # Look up depth_resolution / depth files. Older bundles (manifest
+    # version <= 2) don't ship depth at all; the splat trainer still works
+    # but skips depth supervision in that case.
+    depth_dir = bundle_dir / "depth"
+    depth_files_by_idx: dict[str, Path] = {}
+    conf_files_by_idx: dict[str, Path] = {}
+    if depth_dir.exists():
+        for p in depth_dir.glob("*.bin"):
+            depth_files_by_idx[p.stem] = p
+        for p in depth_dir.glob("*.conf"):
+            conf_files_by_idx[p.stem] = p
 
     # Cap the frames we feed to the texture baker. Per-frame visibility
     # raycasting is O(frames * faces * atlas_pixels); top_k=4 means more
@@ -313,8 +325,14 @@ def _process_lidar_mesh(
     #     trained Gaussians right-side up.
     extrinsics_w2c_for_texture: list[np.ndarray] = []
     extrinsics_w2c_for_splat: list[np.ndarray] = []
+    depths_per_frame: list[np.ndarray | None] = []
+    confs_per_frame: list[np.ndarray | None] = []
 
     image_w, image_h = manifest["image_resolution"]
+    manifest_depth_res = manifest.get("depth_resolution")
+    depth_w_canon = depth_h_canon = None
+    if isinstance(manifest_depth_res, (list, tuple)) and len(manifest_depth_res) == 2:
+        depth_w_canon, depth_h_canon = int(manifest_depth_res[0]), int(manifest_depth_res[1])
 
     # Two transforms compose:
     #   gl_to_cv: ARKit camera frame (X right, Y up, Z back, GL-style)
@@ -359,13 +377,48 @@ def _process_lidar_mesh(
         intrinsics_list.append(K)
         images.append(rgb)
 
+        depth_arr = None
+        conf_arr = None
+        depth_path = depth_files_by_idx.get(idx)
+        if depth_path is not None:
+            raw = np.fromfile(depth_path, dtype="<f4")
+            if depth_w_canon is None or depth_h_canon is None:
+                # Infer from first depth file when manifest doesn't declare it.
+                # Most LiDAR sensors are 192×256 (LiDAR Pro) or 256×192;
+                # iPhone ARKit reports (w, h) so use that ordering.
+                # Fall back to 192×256 if the size doesn't match either.
+                total = raw.size
+                for cand_w, cand_h in [(256, 192), (192, 256), (320, 240), (240, 320)]:
+                    if cand_w * cand_h == total:
+                        depth_w_canon, depth_h_canon = cand_w, cand_h
+                        break
+            if depth_w_canon and depth_h_canon and raw.size == depth_w_canon * depth_h_canon:
+                depth_arr = raw.reshape(depth_h_canon, depth_w_canon).astype(np.float32)
+                conf_path = conf_files_by_idx.get(idx)
+                if conf_path is not None:
+                    conf_raw = np.fromfile(conf_path, dtype=np.uint8)
+                    if conf_raw.size == depth_w_canon * depth_h_canon:
+                        conf_arr = conf_raw.reshape(depth_h_canon, depth_w_canon)
+            else:
+                print(
+                    f"[lidar_mesh] depth file {depth_path.name} size {raw.size} "
+                    f"doesn't match expected dims — skipping depth supervision for it",
+                    flush=True,
+                )
+
+        depths_per_frame.append(depth_arr)
+        confs_per_frame.append(conf_arr)
+
     images_hwc = np.stack(images, axis=0)  # (S, H, W, 3) uint8
     intrinsics_arr = np.stack(intrinsics_list, axis=0)  # (S, 3, 3)
     extrinsics_w2c_arr = np.stack(extrinsics_w2c_for_texture, axis=0)  # rotated world
     extrinsics_w2c_arkit_arr = np.stack(extrinsics_w2c_for_splat, axis=0)  # ARKit world
+    n_with_depth = sum(1 for d in depths_per_frame if d is not None)
     _phase("load_frames", t0)
     print(
-        f"[lidar_mesh] frames={images_hwc.shape[0]} @ {images_hwc.shape[1:3]}",
+        f"[lidar_mesh] frames={images_hwc.shape[0]} @ {images_hwc.shape[1:3]} "
+        f"· depth_maps={n_with_depth} @ "
+        f"{(depth_h_canon, depth_w_canon) if depth_h_canon else 'n/a'}",
         flush=True,
     )
 
@@ -405,8 +458,14 @@ def _process_lidar_mesh(
     # ARKit-world poses (different from the texture-bake poses, which are in
     # the rot_x_180-rotated world). The splat viewer doesn't apply any axis
     # rotation, so the result is rendered correctly Y-up.
+    #
+    # The new gsplat-library trainer (replacing graphdeco's subprocess
+    # train.py) takes per-camera depth + conf when present, prunes the
+    # output Gaussians against `mesh_arkit` to remove floaters, and emits
+    # the antimatter15-style `.splat` quantized format directly. See
+    # `_splat_phase_lidar_mesh` for the full sequence.
     splat_info: dict[str, Any] = {"enabled": False}
-    splat_gz_path: str | None = None
+    splat_path: str | None = None
     if bool(options.get("splat_enabled", True)):
         t0 = time.time()
         splat_info = _splat_phase_lidar_mesh(
@@ -414,11 +473,15 @@ def _process_lidar_mesh(
             images_hwc=images_hwc,
             intrinsics_arr=intrinsics_arr,
             extrinsics_w2c_arkit=extrinsics_w2c_arkit_arr,
+            depths_per_frame=depths_per_frame,
+            confs_per_frame=confs_per_frame,
+            depth_resolution=(depth_h_canon, depth_w_canon),
             output_dir=output_dir,
             options=options,
+            timings=timings,
         )
-        splat_gz_path = splat_info.get("gz_path")
-        _phase("splat_train", t0)
+        splat_path = splat_info.get("splat_path")
+        _phase("splat_total", t0)
     else:
         print("[lidar_mesh] splat disabled by options.splat_enabled=false", flush=True)
 
@@ -449,13 +512,12 @@ def _process_lidar_mesh(
     r2.upload_file(metadata_path, metadata_key, content_type="application/json")
 
     splat_key: str | None = None
-    if splat_gz_path and Path(splat_gz_path).exists():
-        splat_key = f"{output_prefix}/splat.ply"
+    if splat_path and Path(splat_path).exists():
+        splat_key = f"{output_prefix}/splat.splat"
         r2.upload_file(
-            splat_gz_path,
+            splat_path,
             splat_key,
             content_type="application/octet-stream",
-            content_encoding="gzip",
         )
 
     _phase("upload", t0)
@@ -482,77 +544,183 @@ def _splat_phase_lidar_mesh(
     images_hwc: "np.ndarray",
     intrinsics_arr: "np.ndarray",
     extrinsics_w2c_arkit: "np.ndarray",
+    depths_per_frame: list,
+    confs_per_frame: list,
+    depth_resolution: tuple[int | None, int | None],
     output_dir: Path,
     options: dict[str, Any],
+    timings: dict[str, float],
 ) -> dict[str, Any]:
     """Train 3D Gaussian Splatting on top of the ARKit fused mesh.
 
-    What's different vs. the lingbot tier's `_run_splat_phase`:
-      • init points come from sampling the mesh surface uniformly — not
-        from a per-pixel depth-unproject (which we don't have)
-      • init colors are mid-gray (3DGS overrides them within the first few
-        hundred iterations from the gt_images, so seed quality doesn't
-        matter much)
-      • cameras are in ARKit-Y-up world (the splat viewer is Y-up native)
+    Three-stage pipeline:
 
-    Returns a dict with `gz_path` set on success, `error` set on failure.
-    Failures are logged but never raised — the run still completes with the
-    textured mesh artifact.
+      1. **train** — `gsplat_trainer.train_lidar_mesh_splat`.
+         Init points sampled uniformly from the ARKit-Y-up mesh surface,
+         mid-gray init colors. RGB + (optional) LiDAR depth supervision at
+         depth resolution. sh_degree=0 (no SH).
+      2. **prune** — `splat_prune.prune_gaussians_with_mesh`.
+         Drop Gaussians > τ meters from the nearest mesh face. The single
+         most effective lever against floaters / haze.
+      3. **encode** — `splat_format.encode_splat_file`.
+         Pack the pruned Gaussians into the antimatter15 `.splat` binary
+         format (32 B/Gaussian, no SH, viewer-native).
+
+    Returns a dict with `splat_path` set on success, `error` on failure.
+    Failures are logged but never raised — the run still completes with
+    the textured mesh artifact.
     """
     import time
-    import tempfile
+    import cv2
     import trimesh
 
     info: dict[str, Any] = {"enabled": True}
-    start = time.time()
     try:
-        from poc.worker.gsplat import (
-            export_colmap_workspace_from_points,
-            gzip_file,
-            train_gaussian_splatting,
-        )
+        from poc.worker.gsplat_trainer import Camera, train_lidar_mesh_splat
+        from poc.worker.splat_format import encode_splat_file
+        from poc.worker.splat_prune import prune_gaussians_with_mesh
 
-        n_init = int(options.get("splat_init_points", 50_000))
+        # ── 1. Sample mesh for init points ────────────────────────────────
+        n_init = int(options.get("splat_init_points", 200_000))
         sample_count = max(n_init, 1)
         sampled, _face_idx = trimesh.sample.sample_surface(mesh_arkit, sample_count)
-        sampled = np.asarray(sampled, dtype=np.float32)
-        # Mid-gray seed colors — 3DGS quickly overrides these from the
-        # ground-truth images during training.
-        init_colors = np.full((sampled.shape[0], 3), 128, dtype=np.uint8)
+        init_xyz = np.asarray(sampled, dtype=np.float32)
+        # Mid-gray seed colors — gsplat overrides them within the first few
+        # hundred iterations from the gt_images, so seed quality doesn't
+        # matter for final appearance.
+        init_rgb = np.full((init_xyz.shape[0], 3), 128, dtype=np.uint8)
 
-        with tempfile.TemporaryDirectory(prefix="colmap-mesh-") as colmap_dir:
-            export_colmap_workspace_from_points(
-                intrinsics=intrinsics_arr,
-                colmap_extrinsics=extrinsics_w2c_arkit,
-                gt_images=images_hwc,
-                init_points=sampled,
-                init_colors=init_colors,
-                colmap_dir=colmap_dir,
-                target_points=n_init,
+        # ── 2. Build training cameras at depth resolution ─────────────────
+        # Determine the training render resolution. Prefer LiDAR depth
+        # resolution when present (matches the depth supervision natively),
+        # otherwise downsample to a fixed budget — rendering at full
+        # 1280×720 makes each gsplat step ~50× more expensive.
+        depth_h, depth_w = depth_resolution if depth_resolution[0] else (None, None)
+        n_with_depth = sum(1 for d in depths_per_frame if d is not None)
+        S, H_img, W_img = images_hwc.shape[:3]
+        if depth_h and depth_w and n_with_depth == S:
+            train_h, train_w = depth_h, depth_w
+        else:
+            # No depth (or partial) → no depth supervision; pick a small
+            # render resolution similar to LiDAR spatial resolution.
+            train_w = int(options.get("splat_render_width", 256))
+            train_h = max(1, int(round(H_img * (train_w / W_img))))
+
+        sx = train_w / float(W_img)
+        sy = train_h / float(H_img)
+
+        cameras: list[Camera] = []
+        for i in range(S):
+            img_resized = cv2.resize(
+                images_hwc[i], (train_w, train_h), interpolation=cv2.INTER_AREA
             )
-
-            iterations = int(options.get("splat_iterations", 7000))
-            gs_output_dir = output_dir / "gs_output"
-            gs_output_dir.mkdir(parents=True, exist_ok=True)
-            ply_path = train_gaussian_splatting(
-                colmap_dir,
-                str(gs_output_dir),
-                iterations=iterations,
+            K = intrinsics_arr[i].copy()
+            K[0, 0] *= sx
+            K[0, 2] *= sx
+            K[1, 1] *= sy
+            K[1, 2] *= sy
+            cam = Camera(
+                image=np.ascontiguousarray(img_resized),
+                intrinsic=K.astype(np.float32),
+                extrinsic_w2c=extrinsics_w2c_arkit[i].astype(np.float32),
+                depth=depths_per_frame[i],
+                depth_conf=confs_per_frame[i],
             )
+            cameras.append(cam)
 
-        if not ply_path:
-            info["error"] = "train_gaussian_splatting returned no PLY"
-            return info
+        iterations = int(options.get("splat_iterations", 7000))
+        depth_lambda = float(options.get("splat_depth_lambda", 0.2))
+        densify_grad = float(options.get("splat_densify_grad", 0.0004))
 
-        gz_path = gzip_file(ply_path)
+        # ── 3. Train ──────────────────────────────────────────────────────
+        t0 = time.time()
+        train_out = train_lidar_mesh_splat(
+            init_xyz=init_xyz,
+            init_rgb=init_rgb,
+            cameras=cameras,
+            iterations=iterations,
+            depth_lambda=depth_lambda,
+            densify_grad_threshold=densify_grad,
+        )
+        timings["splat_train"] = round(time.time() - t0, 2)
+        print(f"[lidar_mesh] splat_train: {timings['splat_train']}s", flush=True)
+
+        # ── 4. Prune against mesh ─────────────────────────────────────────
+        t0 = time.time()
+        threshold = float(options.get("splat_prune_threshold", 0.12))
+        try:
+            pruned, prune_stats = prune_gaussians_with_mesh(
+                means=train_out["means"],
+                quats_wxyz=train_out["quats_wxyz"],
+                scales=train_out["scales"],
+                opacities=train_out["opacities"],
+                rgb=train_out["rgb"],
+                mesh=mesh_arkit,
+                threshold=threshold,
+            )
+        except Exception as prune_exc:
+            # Pruning failure shouldn't kill the run — fall back to the
+            # un-pruned splat. Floaters will be visible but the model still
+            # exists.
+            import traceback
+            traceback.print_exc()
+            print(
+                f"[lidar_mesh] splat_prune FAILED: {prune_exc} — using unpruned splat",
+                flush=True,
+            )
+            pruned = {
+                "means": train_out["means"],
+                "quats_wxyz": train_out["quats_wxyz"],
+                "scales": train_out["scales"],
+                "opacities": train_out["opacities"],
+                "rgb": train_out["rgb"],
+            }
+            prune_stats = {"error": f"{type(prune_exc).__name__}: {prune_exc}"}
+        timings["splat_prune"] = round(time.time() - t0, 2)
+        print(
+            f"[lidar_mesh] splat_prune: {timings['splat_prune']}s · "
+            f"kept {prune_stats.get('kept', '?')}/{prune_stats.get('input', '?')} "
+            f"(pruned {prune_stats.get('pruned', '?')})",
+            flush=True,
+        )
+
+        # ── 5. Encode .splat ──────────────────────────────────────────────
+        t0 = time.time()
+        splat_path = output_dir / "splat.splat"
+        # Sort by distance from mesh centroid so that even before the
+        # viewer's GPU sort kicks in, the initial appearance is sane.
+        centroid = mesh_arkit.centroid.astype(np.float32)
+        encode_info = encode_splat_file(
+            means=pruned["means"],
+            quats_wxyz=pruned["quats_wxyz"],
+            scales=pruned["scales"],
+            opacities=pruned["opacities"],
+            rgb=pruned["rgb"],
+            output_path=str(splat_path),
+            sort_by_distance_to=tuple(float(c) for c in centroid),
+        )
+        timings["splat_encode"] = round(time.time() - t0, 2)
+        print(
+            f"[lidar_mesh] splat_encode: {timings['splat_encode']}s · "
+            f"{encode_info['gaussians']} gaussians · "
+            f"{round(encode_info['bytes'] / 1e6, 2)} MB",
+            flush=True,
+        )
+
         info.update(
             {
-                "ply_path": ply_path,
-                "gz_path": gz_path,
+                "splat_path": str(splat_path),
                 "iterations": iterations,
-                "duration_seconds": round(time.time() - start, 3),
-                "size_mb_raw": round(os.path.getsize(ply_path) / 1e6, 2),
-                "size_mb_gz": round(os.path.getsize(gz_path) / 1e6, 2),
+                "depth_lambda": depth_lambda,
+                "densify_grad_threshold": densify_grad,
+                "prune_threshold": threshold,
+                "render_resolution": [int(train_h), int(train_w)],
+                "depth_supervision": train_out["stats"]["depth_supervision"],
+                "train_stats": train_out["stats"],
+                "prune_stats": prune_stats,
+                "encode": encode_info,
+                "size_mb": round(encode_info["bytes"] / 1e6, 2),
+                "format": "splat",
             }
         )
         return info

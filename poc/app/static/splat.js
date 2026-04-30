@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import {
   Viewer,
   RenderMode,
@@ -11,7 +12,6 @@ const params = new URLSearchParams(location.search);
 const runId = params.get("run");
 const root = document.querySelector("#viewer");
 const hud = document.querySelector("#hud");
-const shDegree = Number.parseInt(params.get("sh") ?? "0", 10);
 const alphaThreshold = Number.parseInt(params.get("alpha") ?? "5", 10);
 
 if (!runId) {
@@ -19,7 +19,10 @@ if (!runId) {
   throw new Error("Missing ?run=...");
 }
 
-const splatUrl = `/api/runs/${encodeURIComponent(runId)}/artifact/splat.ply`;
+// `.splat` is the antimatter15-style binary format (32 B/Gaussian, no SH)
+// produced by poc/worker/splat_format.encode_splat_file. mkkellogg's
+// Viewer auto-detects format from the URL extension.
+const splatUrl = `/api/runs/${encodeURIComponent(runId)}/artifact/splat.splat`;
 const metadataUrl = `/api/runs/${encodeURIComponent(runId)}/artifact/metadata.json`;
 
 const camera = new THREE.PerspectiveCamera(
@@ -38,6 +41,8 @@ renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.autoClear = true;
 renderer.setClearColor(0x111418, 1);
 root.appendChild(renderer.domElement);
+// Keep iOS Safari from hijacking two-finger gestures as page zoom.
+renderer.domElement.style.touchAction = "none";
 
 addEventListener("resize", () => {
   camera.aspect = innerWidth / innerHeight;
@@ -45,6 +50,27 @@ addEventListener("resize", () => {
   renderer.setSize(innerWidth, innerHeight);
 });
 
+// Touch-friendly orbiting controls (matches /mesh viewer):
+//   • single-finger drag → orbit
+//   • pinch              → dolly (zoom)
+//   • two-finger drag    → pan
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.rotateSpeed = 0.6;
+controls.panSpeed = 0.8;
+controls.zoomSpeed = 1.0;
+controls.touches = {
+  ONE: THREE.TOUCH.ROTATE,
+  TWO: THREE.TOUCH.DOLLY_PAN,
+};
+controls.minDistance = 0.05;
+controls.maxDistance = 200;
+controls.target.set(0, 0, 0);
+
+// `.splat` has no spherical harmonics — DC color only — so we initialize
+// the Viewer with sphericalHarmonicsDegree = 0. Saves the SH evaluation
+// pass per render frame.
 const viewer = new Viewer({
   rootElement: root,
   selfDrivenMode: false,
@@ -61,9 +87,7 @@ const viewer = new Viewer({
   renderMode: RenderMode.Always,
   antialiased: true,
   focalAdjustment: 1.0,
-  sphericalHarmonicsDegree: Number.isFinite(shDegree)
-    ? Math.max(0, Math.min(2, shDegree))
-    : 0,
+  sphericalHarmonicsDegree: 0,
   sceneRevealMode: SceneRevealMode.Instant,
   logLevel: LogLevel.Warning,
 });
@@ -73,6 +97,41 @@ let loaded = false;
 
 function setHud(text) {
   hud.textContent = text;
+}
+
+function applyViewerCamera(viewerCamera) {
+  if (!viewerCamera) return false;
+  const {
+    position,
+    target,
+    up,
+    fov_degrees: fov,
+    near,
+    far,
+  } = viewerCamera;
+  if (!Array.isArray(position) || !Array.isArray(target)) return false;
+
+  camera.position.set(position[0], position[1], position[2]);
+  if (Array.isArray(up)) camera.up.set(up[0], up[1], up[2]);
+  if (Number.isFinite(fov)) camera.fov = fov;
+  if (Number.isFinite(near)) camera.near = near;
+  if (Number.isFinite(far)) camera.far = far;
+  controls.target.set(target[0], target[1], target[2]);
+  camera.updateProjectionMatrix();
+  controls.update();
+  return true;
+}
+
+async function loadViewerCamera() {
+  try {
+    const response = await fetch(metadataUrl);
+    if (!response.ok) return false;
+    const metadata = await response.json();
+    return applyViewerCamera(metadata?.splat?.viewer_camera);
+  } catch (error) {
+    console.warn("[splat] metadata camera unavailable:", error);
+    return false;
+  }
 }
 
 viewer
@@ -94,7 +153,7 @@ viewer
     const cameraApplied = await loadViewerCamera();
     setHud(
       `${cameraApplied ? "Started at training camera. " : ""}` +
-        "Click to lock pointer. WASD move, mouse look, Space up, Shift down.",
+        "Drag to rotate · pinch to zoom · two-finger drag to pan",
     );
   })
   .catch((err) => {
@@ -102,100 +161,8 @@ viewer
     setHud(`Failed to load splat: ${err.message || err}`);
   });
 
-// FPS controls — same shape as viewer.js so muscle memory transfers.
-const keys = new Set();
-let locked = false;
-let yaw = 0;
-let pitch = 0;
-let last = performance.now();
-let moveSpeed = 1.5;
-
-function syncYawPitchFromCamera() {
-  camera.rotation.order = "YXZ";
-  yaw = camera.rotation.y;
-  pitch = camera.rotation.x;
-}
-
-function applyViewerCamera(viewerCamera) {
-  if (!viewerCamera) return false;
-  const {
-    position,
-    target,
-    up,
-    fov_degrees: fov,
-    near,
-    far,
-    move_speed: speed,
-  } = viewerCamera;
-  if (!Array.isArray(position) || !Array.isArray(target)) return false;
-
-  camera.position.set(position[0], position[1], position[2]);
-  if (Array.isArray(up)) camera.up.set(up[0], up[1], up[2]);
-  if (Number.isFinite(fov)) camera.fov = fov;
-  if (Number.isFinite(near)) camera.near = near;
-  if (Number.isFinite(far)) camera.far = far;
-  if (Number.isFinite(speed)) moveSpeed = speed;
-  camera.lookAt(new THREE.Vector3(target[0], target[1], target[2]));
-  camera.updateProjectionMatrix();
-  syncYawPitchFromCamera();
-  return true;
-}
-
-async function loadViewerCamera() {
-  try {
-    const response = await fetch(metadataUrl);
-    if (!response.ok) return false;
-    const metadata = await response.json();
-    return applyViewerCamera(metadata?.splat?.viewer_camera);
-  } catch (error) {
-    console.warn("[splat] metadata camera unavailable:", error);
-    return false;
-  }
-}
-
-renderer.domElement.addEventListener("click", () =>
-  renderer.domElement.requestPointerLock(),
-);
-document.addEventListener("pointerlockchange", () => {
-  locked = document.pointerLockElement === renderer.domElement;
-});
-document.addEventListener("mousemove", (event) => {
-  if (!locked) return;
-  yaw -= event.movementX * 0.002;
-  pitch -= event.movementY * 0.002;
-  pitch = Math.max(-Math.PI / 2 + 0.01, Math.min(Math.PI / 2 - 0.01, pitch));
-});
-document.addEventListener("keydown", (event) => keys.add(event.code));
-document.addEventListener("keyup", (event) => keys.delete(event.code));
-
-function updateCamera(delta) {
-  camera.rotation.order = "YXZ";
-  camera.rotation.y = yaw;
-  camera.rotation.x = pitch;
-
-  const forward = new THREE.Vector3();
-  camera.getWorldDirection(forward);
-  forward.y = 0;
-  forward.normalize();
-  const right = new THREE.Vector3().crossVectors(forward, camera.up).normalize();
-  const movement = new THREE.Vector3();
-
-  if (keys.has("KeyW")) movement.add(forward);
-  if (keys.has("KeyS")) movement.sub(forward);
-  if (keys.has("KeyD")) movement.sub(right);
-  if (keys.has("KeyA")) movement.add(right);
-  if (keys.has("Space")) movement.y += 1;
-  if (keys.has("ShiftLeft") || keys.has("ShiftRight")) movement.y -= 1;
-  if (movement.lengthSq() > 0) {
-    movement.normalize().multiplyScalar(moveSpeed * delta);
-    camera.position.add(movement);
-  }
-}
-
-function frame(now) {
-  const delta = Math.min((now - last) / 1000, 0.05);
-  last = now;
-  updateCamera(delta);
+function frame() {
+  controls.update();
   viewer.update();
   viewer.render();
   requestAnimationFrame(frame);

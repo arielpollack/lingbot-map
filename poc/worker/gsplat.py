@@ -4,6 +4,12 @@ Ported from ~/develop/vitour/packages/gpu-worker/handler.py (rotation_matrix_to_
 export_colmap_workspace, train_gaussian_splatting). Same algorithm; only the
 default iteration count is changed (7000 instead of 30000) and the module is
 isolated from the rest of the worker so it can be tested without GPU deps.
+
+NOTE: For the `lidar_mesh` tier, this module's `train_gaussian_splatting`
+(graphdeco subprocess) has been superseded by
+`poc.worker.gsplat_trainer.train_lidar_mesh_splat` (gsplat library, in-process,
+depth-supervised, sh_degree=0, `.splat` output). The lingbot per-frame-depth
+tier (`tier=lidar`) and the legacy raw-video tier still call into this module.
 """
 
 from __future__ import annotations

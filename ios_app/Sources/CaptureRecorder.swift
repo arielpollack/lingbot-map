@@ -32,7 +32,12 @@ final class CaptureRecorder: NSObject, ObservableObject {
 
     // ── Capture quality knobs ──
     // We rely on ARKit's on-device LiDAR mesh fusion (sceneReconstruction =
-    // .mesh) for the geometry, so frames are only needed for texture baking.
+    // .mesh) for the geometry, but we ALSO ship per-frame LiDAR depth +
+    // ARConfidence so the server's gsplat trainer can use them as
+    // depth-supervised loss (lidar_mesh tier). Bundle stays small: 30
+    // frames × (192×256×4 + 192×256×1) ≈ 7 MB uncompressed, ~3 MB after
+    // the zip deflate.
+    //
     // 2 fps is plenty for that: top-K=4 frame selection in the texture
     // baker means anything beyond ~30 well-spaced frames per scan adds
     // server time without improving the atlas.
@@ -40,9 +45,7 @@ final class CaptureRecorder: NSObject, ObservableObject {
     /// Long-side cap for the saved JPEG.
     private let jpegLongSideCap: CGFloat = 1280
     /// JPEG quality. 0.8 keeps texture sharpness usable for close-up
-    /// viewing of the textured mesh; the bundle is dominated by the OBJ
-    /// mesh now (we no longer ship per-frame depth) so the bytes per JPEG
-    /// matter less.
+    /// viewing of the textured mesh.
     private let jpegQuality: Double = 0.8
     /// Serial queue. Concurrency here previously let many in-flight writes
     /// each retain a CVPixelBuffer (which retains its parent ARFrame),
@@ -161,6 +164,8 @@ final class CaptureRecorder: NSObject, ObservableObject {
                 at: dir.appendingPathComponent("frames"), withIntermediateDirectories: true)
             try FileManager.default.createDirectory(
                 at: dir.appendingPathComponent("poses"), withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(
+                at: dir.appendingPathComponent("depth"), withIntermediateDirectories: true)
         } catch {
             status = "Cannot create session dir: \(error.localizedDescription)"
             log.log("ERROR creating session dir: \(error)")
@@ -189,6 +194,7 @@ final class CaptureRecorder: NSObject, ObservableObject {
         let dir = captureDirectory
         let count = captureCount
         let imageRes = imageResolution
+        let depthRes = depthResolution
         captureDirectory = nil
         stateLock.unlock()
 
@@ -240,6 +246,7 @@ final class CaptureRecorder: NSObject, ObservableObject {
                 tier: tier,
                 frameCount: count,
                 imageResolution: imageRes,
+                depthResolution: depthRes,
                 meshStats: meshStats
             )
             let manifestURL = dir.appendingPathComponent("manifest.json")
@@ -317,23 +324,44 @@ final class CaptureRecorder: NSObject, ObservableObject {
             ]
         )
 
+        // Snapshot depth + ARConfidence synchronously while the ARFrame
+        // is still alive. Same retention-safety reasoning as the JPEG
+        // above — we copy the raw bytes off the CVPixelBuffer here and
+        // ship plain Data into the writeQueue.
+        let depthSnap: DepthSnapshot? = frame.sceneDepth.flatMap { snapshotDepth($0) }
+        let depthRes: CGSize? = depthSnap.map {
+            CGSize(width: $0.width, height: $0.height)
+        }
+
         let poseData = encodePose(
             intrinsics: intrinsics,
             transform: transform,
             imageResolution: imageRes,
-            depthResolution: nil
+            depthResolution: depthRes
         )
 
         let frameURL = dir.appendingPathComponent("frames/\(formatIndex(index)).jpg")
         let poseURL = dir.appendingPathComponent("poses/\(formatIndex(index)).json")
+        let depthBinURL = dir.appendingPathComponent("depth/\(formatIndex(index)).bin")
+        let depthConfURL = dir.appendingPathComponent("depth/\(formatIndex(index)).conf")
 
-        let bytesAdded = Int64((jpegData?.count ?? 0) + poseData.count)
+        var depthBytes = 0
+        if let snap = depthSnap {
+            depthBytes = snap.depthBytes.count + snap.confidenceBytes.count
+        }
+        let bytesAdded = Int64(
+            (jpegData?.count ?? 0) + poseData.count + depthBytes
+        )
 
         writeQueue.async {
             if let data = jpegData {
                 try? data.write(to: frameURL)
             }
             try? poseData.write(to: poseURL)
+            if let snap = depthSnap {
+                try? snap.depthBytes.write(to: depthBinURL)
+                try? snap.confidenceBytes.write(to: depthConfURL)
+            }
         }
 
         DispatchQueue.main.async { [weak self] in
@@ -396,10 +424,15 @@ final class CaptureRecorder: NSObject, ObservableObject {
         tier: String,
         frameCount: Int,
         imageResolution: CGSize,
+        depthResolution: CGSize,
         meshStats: MeshExporter.Stats?
     ) -> Data {
         var dict: [String: Any] = [
-            "version": 2,
+            // v3: re-introduces per-frame `depth/<idx>.bin` + `.conf`
+            // sidecars for every keyframe, alongside the previously-shipped
+            // mesh.obj + frames/ + poses/. The server's gsplat trainer
+            // uses these as depth-supervised loss for the lidar_mesh tier.
+            "version": 3,
             "tier": tier,
             "frame_count": frameCount,
             "fps": captureFpsSnapshot,
@@ -409,6 +442,14 @@ final class CaptureRecorder: NSObject, ObservableObject {
             "transform_convention": "c2w_4x4_row_major_arkit_world",
             "intrinsics_convention": "fx_fy_cx_cy_at_image_resolution",
         ]
+        if depthResolution != .zero {
+            dict["depth_resolution"] = [
+                Int(depthResolution.width),
+                Int(depthResolution.height),
+            ]
+            dict["depth_format"] = "float32_le_meters"
+            dict["confidence_format"] = "uint8_arconfidence"
+        }
         if let m = meshStats {
             dict["mesh"] = [
                 "format": "obj",
