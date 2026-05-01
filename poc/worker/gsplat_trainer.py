@@ -36,18 +36,22 @@ DEPTH_CONF_MIN = 1
 
 @dataclass
 class Camera:
-    """Single training camera. All arrays at the SAME resolution.
+    """Single training camera.
 
-    For the lidar_mesh tier, the calling code downsamples the RGB to the
-    LiDAR depth resolution (192 × 256 by default) and scales the intrinsics
-    accordingly. Training at depth resolution is ~50× cheaper than at
-    1280 × 720 and matches the depth supervision natively.
+    `image` + `intrinsic` are at the **render resolution** (whatever the
+    pipeline chose, typically 640 wide). `depth` + `depth_conf` are at the
+    LiDAR sensor's native resolution (typically 256×192) and stay there —
+    the trainer bilinearly upsamples them to render resolution per step
+    before computing the depth loss. That's ~free relative to a full
+    rasterization step and means render resolution can be picked purely
+    for visual sharpness without coupling it to the (much smaller) depth
+    map size.
     """
-    image: np.ndarray              # (H, W, 3) uint8 RGB
-    intrinsic: np.ndarray          # (3, 3) f32 OpenCV K at this resolution
+    image: np.ndarray              # (H_render, W_render, 3) uint8 RGB
+    intrinsic: np.ndarray          # (3, 3) f32 OpenCV K at render resolution
     extrinsic_w2c: np.ndarray      # (4, 4) f32 OpenCV w2c (world → camera)
-    depth: np.ndarray | None       # (H, W) f32 meters, OR None
-    depth_conf: np.ndarray | None  # (H, W) u8 ARConfidence 0..2, OR None
+    depth: np.ndarray | None       # (H_depth, W_depth) f32 meters, OR None
+    depth_conf: np.ndarray | None  # (H_depth, W_depth) u8 ARConfidence 0..2, OR None
 
 
 def train_lidar_mesh_splat(
@@ -215,24 +219,46 @@ def train_lidar_mesh_splat(
         print(f"[gsplat-train] strategy.check_sanity warning: {exc}", flush=True)
     state = strategy.initialize_state(scene_scale=scene_scale)
 
-    # ── Pre-upload camera tensors (small at depth-res, fits comfortably) ──
+    # ── Pre-upload camera tensors ─────────────────────────────────────────
+    # gt_rgb sits at render resolution; gt_depth + conf are upsampled to
+    # render resolution via bilinear/nearest interpolation here so the loop
+    # below can compare them pixel-for-pixel against rendered output. The
+    # upsample is one-time, GPU-side, and small (sub-MB per frame).
+    H_render, W_render = cameras[0].image.shape[:2]
     cam_tensors = []
     for cam in cameras:
         gt_rgb = torch.tensor(
             cam.image.astype(np.float32) / 255.0,
             dtype=torch.float32,
             device=device,
-        )  # (H, W, 3)
+        )  # (H_render, W_render, 3)
         K = torch.tensor(cam.intrinsic, dtype=torch.float32, device=device)  # (3, 3)
         viewmat = torch.tensor(
             cam.extrinsic_w2c, dtype=torch.float32, device=device
         )  # (4, 4)
         if cam.depth is not None:
-            gt_depth = torch.tensor(cam.depth, dtype=torch.float32, device=device)  # (H, W)
+            depth_native = torch.tensor(
+                cam.depth, dtype=torch.float32, device=device
+            )  # (H_depth, W_depth)
+            # Bilinear upsample to render resolution.
+            gt_depth = F.interpolate(
+                depth_native[None, None],
+                size=(H_render, W_render),
+                mode="bilinear",
+                align_corners=False,
+            )[0, 0]
             if cam.depth_conf is not None:
-                conf = torch.tensor(
+                conf_native = torch.tensor(
                     cam.depth_conf, dtype=torch.float32, device=device
                 )
+                # Nearest for conf — preserves the discrete 0/1/2 levels;
+                # bilinear would create fractional confidences which then
+                # need a threshold anyway.
+                conf = F.interpolate(
+                    conf_native[None, None],
+                    size=(H_render, W_render),
+                    mode="nearest",
+                )[0, 0]
                 conf_mask = (conf >= float(DEPTH_CONF_MIN)).float()
             else:
                 conf_mask = torch.ones_like(gt_depth)

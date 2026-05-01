@@ -590,21 +590,30 @@ def _splat_phase_lidar_mesh(
         # matter for final appearance.
         init_rgb = np.full((init_xyz.shape[0], 3), 128, dtype=np.uint8)
 
-        # ── 2. Build training cameras at depth resolution ─────────────────
-        # Determine the training render resolution. Prefer LiDAR depth
-        # resolution when present (matches the depth supervision natively),
-        # otherwise downsample to a fixed budget — rendering at full
-        # 1280×720 makes each gsplat step ~50× more expensive.
+        # ── 2. Build training cameras at the chosen render resolution ─────
+        # Render resolution drives final splat sharpness more than any other
+        # knob. Going from 256 → 1280 wide (5× linear, 25× pixels) is the
+        # difference between blob-art and FPS-game-clear. The cost: ~25× more
+        # compute per training step.
+        #
+        # Default = 640 wide (480 tall on 4:3 LiDAR captures). Sharp enough
+        # that text on monitors becomes legible from a normal viewing
+        # distance, ~6× cheaper than full image res. Override via
+        # options.splat_render_width — 1280 for max quality, 256 for the
+        # old "blob" speed.
+        #
+        # Earlier versions of this code forced render res = depth res when
+        # depth was present, "to match the supervision natively". That made
+        # depth-supervised runs render at 192×256 regardless of what the
+        # caller asked for, which is the entire reason splats were blurry
+        # even with depth on. The depth loss in gsplat_trainer now
+        # bilinearly upsamples the LiDAR depth to render res before
+        # comparing, so render resolution is fully decoupled.
         depth_h, depth_w = depth_resolution if depth_resolution[0] else (None, None)
         n_with_depth = sum(1 for d in depths_per_frame if d is not None)
         S, H_img, W_img = images_hwc.shape[:3]
-        if depth_h and depth_w and n_with_depth == S:
-            train_h, train_w = depth_h, depth_w
-        else:
-            # No depth (or partial) → no depth supervision; pick a small
-            # render resolution similar to LiDAR spatial resolution.
-            train_w = int(options.get("splat_render_width", 256))
-            train_h = max(1, int(round(H_img * (train_w / W_img))))
+        train_w = int(options.get("splat_render_width", 640))
+        train_h = max(1, int(round(H_img * (train_w / W_img))))
 
         sx = train_w / float(W_img)
         sy = train_h / float(H_img)
